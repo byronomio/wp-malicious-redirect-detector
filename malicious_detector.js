@@ -5,56 +5,58 @@ function isMaliciousUrl(url) {
 }
 
 document.addEventListener("DOMContentLoaded", function () {
-    var maliciousURL = "https://sarcoma.space";
-    var blockedURLs = []; // to keep track of blocked URLs
+    var blockedURLs = new Set();  // Use Set to keep track of blocked URLs
 
     // Check each script on the page
     var scripts = document.getElementsByTagName("script");
     for (var i = 0; i < scripts.length; i++) {
         if (isMaliciousUrl(scripts[i].src)) {
-            window.detectedMaliciousScriptURL = scripts[i].src; // store the malicious script URL
+            blockedURLs.add(scripts[i].src); // Add to blocked URLs list
             scripts[i].remove();
-            window.hasMaliciousScript = true;
 
-            // Log to the console only if not already logged
-            if (!blockedURLs.includes(scripts[i].src)) {
-                console.error("Blocked malicious script:", scripts[i].src);
-                blockedURLs.push(scripts[i].src); // add to blocked URLs list
-            }
+            console.error("Blocked malicious script:", scripts[i].src);
 
-            i--; // Adjust index after removing an element
+            i--;  // Adjust index after removing an element
         }
     }
 
     // Intercept script element creation to block malicious sources
-    var realCreateElement = document.createElement;
+    var realCreateElement = document.createElement.bind(document);  // bind to document
     document.createElement = function (tagName) {
-        var elem = realCreateElement.call(document, tagName);
+        var elem = realCreateElement(tagName);
         if (tagName === "script") {
+            let actualSrc = null;
+            let settingSrc = false;  // Flag to prevent recursion
+
             Object.defineProperty(elem, "src", {
                 set: function (value) {
-                    if (isMaliciousUrl(value)) {
-                        window.hasMaliciousScript = true;
+                    if (settingSrc) return;  // Exit if already setting src
 
-                        // Log to the console only if not already logged
-                        if (!blockedURLs.includes(value)) {
-                            console.error("Blocked malicious script:", value);
-                            blockedURLs.push(value); // add to blocked URLs list
-                        }
+                    settingSrc = true;  // Set flag
+                    if (isMaliciousUrl(value)) {
+                        blockedURLs.add(value);  // Add to blocked URLs list
+                        console.error("Blocked malicious script:", value);
                     } else {
+                        actualSrc = value;
                         elem.setAttribute("src", value);
                     }
+                    settingSrc = false;  // Reset flag
+                },
+                get: function () {
+                    return actualSrc;
                 }
             });
         }
         return elem;
     };
 
+
     // Intercept AJAX requests to block malicious URLs
     (function (open) {
         XMLHttpRequest.prototype.open = function (method, url, async, user, password) {
             if (isMaliciousUrl(url)) {
-                window.hasMaliciousScript = true;
+                blockedURLs.add(url);  // Add to blocked URLs list
+                console.error("Blocked malicious script:", url);
                 return;
             }
             open.call(this, method, url, async, user, password);
@@ -62,10 +64,10 @@ document.addEventListener("DOMContentLoaded", function () {
     })(XMLHttpRequest.prototype.open);
 
     // If a malicious script is detected, send an alert via AJAX
-    if (window.hasMaliciousScript) {
+    if (blockedURLs.size > 0) {
         var xhr = new XMLHttpRequest();
         xhr.open("POST", "/wp-admin/admin-ajax.php", true);
         xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-        xhr.send("action=detect_malicious_script&maliciousScriptDetected=1&maliciousScriptURL=" + encodeURIComponent(window.detectedMaliciousScriptURL));
+        xhr.send("action=detect_malicious_script&maliciousScriptDetected=1&maliciousScriptURL=" + encodeURIComponent(Array.from(blockedURLs).join(", ")));
     }
 });
